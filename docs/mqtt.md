@@ -596,6 +596,38 @@ Tells printer to perform a filament change using AMS.
 
 TODO
 
+## print.ams_get_rfid
+
+Read RFID info
+
+**Request**
+
+```json
+{
+    "print": {
+        "sequenceId": "0",
+        "command": "ams_get_rfid",
+        "ams_id": 0, // Index of the AMS
+        "slot_id": 0 // Index of the Tray
+    }
+}
+```
+
+**Report**
+
+```json
+{
+    "print": {
+        "sequenceId": "0",
+        "command": "ams_get_rfid",
+        "result": "success",
+        "reason": "success",
+        "ams_id": 0,
+        "slot_id": 0
+    }
+}
+```
+
 ## print.ams_user_setting
 
 Changes the AMS settings of the given unit.
@@ -735,13 +767,22 @@ Starts calibration process.
 
 **Note:** Some printers might need `gcode_file` with `/usr/etc/print/auto_cali_for_user.gcode` instead!
 
+**Note:** The options parameter should be a bitmask like this:
+```
+ if (lidarCalibration) bitmask |= 1;
+ if (bedLevelling) bitmask |= 1 << 1;
+ if (vibrationCompensation) bitmask |= 1 << 2;
+ if (motorCancellation) bitmask |= 1 << 3;
+```
+
 **Request**
 
 ```json
 {
     "print": {
         "sequence_id": "0",
-        "command": "calibration"
+        "command": "calibration",
+        "option": 0,
     }
 }
 ```
@@ -808,9 +849,65 @@ Prints a "project"
 }
 ```
 
+
+
 **Report**
 
 See basic structure
+
+
+## AMS Mapping Configuration (`ams_mapping`)
+
+### Overview
+
+The `ams_mapping` parameter is crucial for multi-color print jobs when using the AMS (Automatic Material System). It defines which AMS slot corresponds to each color in your print file.
+
+### Structure
+
+```json
+{
+  "print": {
+    "ams_mapping": [
+      -1,
+      -1,
+      -1,
+      1,
+      0
+    ],
+    // ... rest of print command
+  }
+}
+```
+
+### How AMS Mapping Works
+
+The `ams_mapping` array uses a **reverse indexing system** where:
+- **Array positions** represent color indices in your print file (starting from 0)
+- **Array values** represent AMS slot numbers (0-3 for typical 4-slot AMS)
+- **-1** indicates unused color slots
+
+#### Key Rules:
+1. **Fixed array length**: Always use 5 elements (supports up to 4 colors + padding)
+2. **Right-to-left assignment**: Color assignments fill from the end of the array
+3. **Pad with -1**: Fill unused positions at the beginning with -1
+
+
+| Colors Used | Array Pattern | Description |
+|----------|---------------|-------------|
+| 1 color     | `[-1, -1, -1, -1, X]` | Single color uses AMS slot X |
+| 2 colors    | `[-1, -1, -1, X, Y]` | Colors map to slots X and Y |
+| 3 colors    | `[-1, -1, X, Y, Z]` | Colors map to slots X, Y, and Z |
+| 4 colors    | `[-1, W, X, Y, Z]` | Colors map to slots W, X, Y, and Z |
+
+### Important Notes
+
+- **AMS slot numbers** are zero-indexed (0, 1, 2, 3)
+- **Color indices** in your print file start from 0
+- The printer will just pause and won't start if the mapping is not correct
+- Ensure the specified AMS slots contain the correct filament types and colors
+- Always set `"use_ams": true` when using AMS mapping
+- Verify your AMS is properly loaded before sending the print job
+---
 
 ## print.skip_objects
 
@@ -838,6 +935,26 @@ Updates [`pushing.pushall`](#pushingpushall) with
       {obj ids}
     ],
 ```
+
+## print.print_option
+
+Modifies the printer's settings.
+
+**Request**
+```json
+{
+  "print": {
+    "sequence_id": "0",
+    "command": "print_option",
+    "auto_recovery": true // can be "auto_recovery", "air_print_detect", "filament_tangle_detect", "nozzle_blob_detect", or "sound_enable"
+  }
+}
+
+```
+
+**Report**
+
+See basic structure
 
 ## system.ledctrl
 
@@ -894,6 +1011,22 @@ Gets the LAN access code of the printer
 }
 ```
 
+## system.set_accessories.nozzle
+
+Update the nozzle type and diameter.
+
+```json
+{
+    "system": {
+        "sequence_id": "0",
+        "accessory_type": "nozzle",
+        "command": "set_accessories",
+        "nozzle_diameter": 0.4,
+        "nozzle_type": "stainless_steel" // "stainless_steel" or "hardened_steel"
+    }
+}
+```
+
 ## camera.ipcam_record_set
 
 Turns on or off creating a recording of prints.
@@ -946,7 +1079,7 @@ Configures the XCam (camera AI features, including Micro LIDAR features).
     "xcam": {
         "sequence_id": "0",
         "command": "xcam_control_set",
-        "module_name": "first_layer_inspector", // "first_layer_inspector" or "spaghetti_detector"
+        "module_name": "first_layer_inspector", // "first_layer_inspector", "buildplate_marker_detector", "printing_monitor", "pileup_detector", "airprint_detector", "clump_detector", or "spaghetti_detector"
         "control": true, // Enable the module
         "print_halt": false // Cause the module to halt the print on error
     }

@@ -56,6 +56,10 @@ func testCertificates(t *testing.T) (*tls.Config, *tls.Config, *x509.Certificate
 	return server, client, leaf
 }
 func TestPrinterTLS(t *testing.T) {
+	defaultConfig, err := DefaultPrinterTLSConfig("SERIAL")
+	if err != nil || defaultConfig.ServerName != "SERIAL" {
+		t.Fatalf("bundled printer CA: config=%v error=%v", defaultConfig, err)
+	}
 	_, cfg, leaf := testCertificates(t)
 	if err := cfg.VerifyConnection(tls.ConnectionState{PeerCertificates: []*x509.Certificate{leaf}}); err != nil {
 		t.Fatal(err)

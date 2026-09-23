@@ -4,10 +4,21 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	_ "embed"
 	"fmt"
 	"net"
 	"time"
 )
+
+// defaultPrinterCAPEM is the public printer CA bundle shipped with Bambu Studio.
+//
+//go:embed certs/printer.cer
+var defaultPrinterCAPEM []byte
+
+// DefaultPrinterTLSConfig verifies a printer using the bundled Bambu CA bundle.
+func DefaultPrinterTLSConfig(serial string) (*tls.Config, error) {
+	return PrinterTLSConfig(serial, defaultPrinterCAPEM)
+}
 
 // PrinterTLSConfig trusts only the supplied CA and verifies the printer identity.
 // Older printer certificates use a legacy Common Name without SAN extensions.

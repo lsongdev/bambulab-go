@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
@@ -14,6 +16,12 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	if err := cli.Run(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
+		if ctx.Err() != nil || errors.Is(err, context.Canceled) {
+			os.Exit(130)
+		}
+		if errors.Is(err, io.EOF) {
+			return
+		}
 		fmt.Fprintln(os.Stderr, "bambulab:", err)
 		os.Exit(1)
 	}

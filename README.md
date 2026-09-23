@@ -18,11 +18,18 @@ go build -o /tmp/bambulab ./cmd/bambulab
 
 ## CLI
 
-Global flags go **before** the command. Output is JSON; errors go to stderr and
-exit with status 1. `watch` emits one JSON object per line and stops on Ctrl-C.
+Global flags go **before** the command, except `--device` and `--json`, which
+may also appear after it. `devices` prints a table; `devices --json` prints the
+devices array with discovered LAN IPs. Errors go to stderr and exit with status 1. `watch` emits
+one JSON object per line and stops on Ctrl-C.
 
 ```sh
 # China is the default; set --region global for an international account.
+bambulab --region global login
+# Enter your account/email and password when prompted. If verification is
+# required, enter the code; the command keeps prompting until login succeeds.
+
+# For noninteractive use, supply credentials through environment variables:
 export BAMBU_ACCOUNT='you@example.com'
 export BAMBU_PASSWORD='your-password'
 bambulab --region global login
@@ -31,21 +38,74 @@ unset BAMBU_PASSWORD
 # Alternatively, read a password from stdin without putting it in argv:
 password-manager-command | bambulab login --account you@example.com --password-stdin
 
-# If login requests verification, submit the received code:
+# If noninteractive login requests verification, submit the received code:
 bambulab login --account you@example.com --code 123456
 
 bambulab profile
 bambulab devices
+bambulab devices --json
+bambulab status
+bambulab version
+bambulab state
+bambulab state --json
+bambulab --device PRINTER_SERIAL status
+bambulab state --device PRINTER_SERIAL
 bambulab tasks --limit 10
 bambulab messages --type 6 --limit 10
 bambulab projects
 bambulab project PROJECT_ID
 bambulab settings
 bambulab setting SETTING_ID
-bambulab version DEVICE_SERIAL
-bambulab status
 bambulab logout
 ```
+
+`devices` shows bound printers, their discovered LAN IPs, and access codes. `status` shows the selected
+printer's cloud print-job summary. `state` connects over MQTT to report live
+run state, progress, temperatures, lights and camera availability. The current
+status report does not provide head X/Y/Z coordinates, so `state` marks them
+unavailable. Controls use the same printer selection rule:
+
+```sh
+bambulab pause
+bambulab resume --device PRINTER_SERIAL
+bambulab stop
+bambulab speed 2
+bambulab light on
+```
+
+The CLI caches the bound-device list for one hour and discovered IPs for 15
+minutes in `credentials-devices.json` beside the credentials file. The cache is
+scoped to the account token, region, and API server, stored with mode `0600`,
+and removed by `logout`. An expired IP is discovered again; a cached IP that
+fails to connect is rediscovered. Explicit `--device`, `--host`, and
+`--access-code` values still take precedence.
+
+If `--device SERIAL` (or `BAMBU_DEVICE_ID`) is omitted, commands that operate
+on one printer use the first printer in the bound list. Use `devices` to see the
+order. For LAN file operations and the A1/P1 camera, the CLI discovers the
+printer's IP from its UDP announcements and gets the access code from the
+account's bound-device list:
+
+```sh
+bambulab snapshot
+bambulab snapshot frame.jpg
+bambulab snapshot frame.jpg --device PRINTER_SERIAL
+bambulab snapshot --json
+bambulab ls /
+bambulab ls / --json
+```
+
+Without a filename, the image is saved as `snapshot-YYYYMMDD-HHMMSS.jpg`.
+The default output is a short confirmation; `--json` outputs `{"saved":"..."}`.
+If local discovery is unavailable, specify `--host IP`; `--access-code` remains
+available when the account cannot supply it. See the [discovery flow](docs/discovery.md)
+for the UDP packet format, matching rules, SDK APIs, and fallback behavior.
+
+The Bambu printer CA bundle is built into the SDK and used to verify the
+printer's certificate and serial number. `--ca FILE` overrides the bundle if
+Bambu changes its certificate chain. This snapshot command uses the local LAN
+camera stream. Cloud video uses a separate relay protocol, so it has no `cloud
+snapshot` command here.
 
 Login saves tokens and region to the user configuration directory:
 `bambulab/credentials.json` (`$XDG_CONFIG_HOME/bambulab/credentials.json` or
@@ -66,7 +126,7 @@ Environment variables:
 | `BAMBU_DEVICE_ID` | Printer serial number |
 | `BAMBU_HOST` | LAN IP/hostname, without a port |
 | `BAMBU_ACCESS_CODE` | LAN access code |
-| `BAMBU_CA_FILE` | Trusted printer CA PEM file |
+| `BAMBU_CA_FILE` | Override bundled printer CA PEM file |
 | `BAMBU_API_URL` | HTTP API override for testing or a trusted proxy |
 
 Cloud MQTT obtains the numeric user ID from the preferences endpoint:
@@ -81,19 +141,15 @@ bambulab light on
 bambulab stop
 ```
 
-To use LAN MQTT, FTPS or the A1/P1 camera, also configure the host, access code and
-trusted CA. Obtain the Bambu printer CA from a trusted source (see
-[TLS reference](docs/tls.md)); it is not bundled in this repository. Both the
-certificate chain and the serial-number identity are checked, including legacy
-certificates that identify printers only through their Common Name.
+LAN MQTT uses the host and access code when explicitly configured. FTPS and the
+A1/P1 camera can discover the host and access code after login. The Bambu CA is
+built in. Both the certificate chain and the serial-number identity are checked,
+including legacy certificates that identify printers only through their Common
+Name. Use `BAMBU_CA_FILE` to override the bundled trust roots.
 
 ```sh
-export BAMBU_HOST='192.168.1.100'
-export BAMBU_ACCESS_CODE='LAN_CODE'
-export BAMBU_CA_FILE='/path/to/bambu-ca.pem'
-
 bambulab watch
-bambulab files /
+bambulab ls /
 bambulab --timeout 5m upload model.3mf /model.3mf
 bambulab --timeout 5m download /model.3mf downloaded.3mf
 bambulab snapshot frame.jpg
@@ -101,8 +157,13 @@ bambulab print ftp:///model.3mf --plate 1 --bed-level
 bambulab print-gcode /path/on/printer/file.gcode
 bambulab gcode 'M105'
 bambulab command camera ipcam_timelapse '{"control":"enable"}'
-bambulab delete /model.3mf
+bambulab rm /model.3mf
 ```
+
+`ls` and `files` print a file table by default and an entries array with `--json`. Upload,
+download and `rm` print a short confirmation by default; `--json` returns a
+success object. Set `BAMBU_HOST` and `BAMBU_ACCESS_CODE` when discovery or the
+account's bound-device access code is unavailable.
 
 Uploading replaces the named remote file. Downloads and snapshots refuse to
 overwrite existing local files and remove incomplete output on failure. Files
@@ -244,7 +305,8 @@ MQTT command correlation/concurrent sequences/status merging, and local TLS
 servers for MQTT, FTPS and camera transfers. They require permission to listen on
 loopback; they never contact real printers or cloud accounts.
 
-Physical printers and live cloud accounts have not been used for validation.
+Automated tests do not use physical printers or live cloud accounts. Read-only
+`devices`, `ls`, and `state` commands have also been checked against an A1 mini.
 Firmware authorization restrictions can reject commands. Refresh tokens, support
 tickets, and some IoT task endpoints have known undocumented/unavailable behavior
 in the supplied references. X1 RTSP decoding, proprietary cloud video transport,
